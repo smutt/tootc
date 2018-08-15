@@ -6,6 +6,9 @@ import "os"
 import "flag"
 import "strings"
 import "io/ioutil"
+//import "strconv"
+//import "encoding/json" 
+
 
 // Our global map of config variables
 var config map[string] string
@@ -20,6 +23,20 @@ func check(e error){
 // Simple debug func
 func dbg(str string){
 	fmt.Println(str)
+}
+
+// Print usage and then exit
+func usage(){
+	fmt.Println("tootc [-p] [-f user@instance] [-l post_id] [-m user@instance] [-r post_id] [-cf file]")
+	fmt.Println("if invoked with no arguments or -cf tootc reads toots from the user's inbox")
+	fmt.Println("-p (Post) read from stdin posting the content to the user's timeline")
+	fmt.Println("-f (Follow) follow user@instance")
+	fmt.Println("-l (Like) like post_id")
+	fmt.Println("-m (Message) read from stdin messaging user@instance directly")
+	fmt.Println("-r (Reply) post reply to post_id")
+	fmt.Println("-cf use a different configuration file than ~/.tootc")
+	fmt.Println("pflmr are all mutually exclusive")
+	os.Exit(0)
 }
 
 // Read in config from passed filename
@@ -64,34 +81,67 @@ func readConfig(fName string){
 	}
 }
 
+/*
+func postToJSON(msg string){
+	return 42
+
+}
+*/
+
 func main(){
 	dbg("Starting \n")
 
 	// Default values
 	cfgFileNameDefault := "~/.tootc"
-	
+
+	invokePost := flag.Bool("p", false, "Post stdin to timeline")
+	invokeFollow := flag.String("f", "", "Follow user@instance")
+	invokeLike := flag.String("l", "", "Like post_id")
+	invokeMessage := flag.String("m", "", "Message user@instance directly")
+	invokeReply := flag.String("r", "", "Reply to post_id with stdin")
 	cfgFileName := flag.String("cf", cfgFileNameDefault, "Configuration file")
-	//readToots := flag.Bool("r", false, "Reading toots")
 	flag.Parse()
 
 	if *cfgFileName == cfgFileNameDefault {
 		readConfig(os.Getenv("HOME") + strings.TrimLeft(cfgFileNameDefault, "~"))
+		if flag.NFlag() > 1 {
+			dbg("Too many CLI arguments")
+			usage()
+		}
 	}else{
 		readConfig(*cfgFileName)
-	}
-
-	fd, err := os.Stdin.Stat()
-	check(err)
-
-	if fd.Mode() & os.ModeNamedPipe == 0 {
-		dbg("no pipe")
-	}else{
-		dbg("pipe")
-		bytes, err := ioutil.ReadAll(os.Stdin)
-		check(err)
-		if len(bytes) > 0 {
-			dbg(string(bytes))
+		if flag.NFlag() > 2 {
+			dbg("Too many CLI arguments")
+			usage()
 		}
 	}
+
+	// Determine why we are being invoked
+	if *invokePost {
+		fd, err := os.Stdin.Stat()
+		check(err)
+		if fd.Mode() & os.ModeNamedPipe == 0 {
+			dbg("no pipe")
+		}else{
+			dbg("pipe")
+			bytes, err := ioutil.ReadAll(os.Stdin)
+			check(err)
+			if len(bytes) > 0 {
+				dbg(string(bytes))
+				//postToJSON(string(bytes))
+			}
+		}
+	}else if len(*invokeFollow) > 0 {
+		dbg("Follow")
+	}else if len(*invokeLike) > 0 {
+		dbg("Like")
+	}else if len(*invokeMessage) > 0 {
+		dbg("Message")
+	}else if len(*invokeReply) > 0{
+		dbg("Reply")
+	}else{ // Read toots from user's inbox
+		dbg("Read")
+	}
+
 	dbg("Finished \n")
 }
