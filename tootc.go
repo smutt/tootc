@@ -7,7 +7,7 @@ import "flag"
 import "strings"
 import "io/ioutil"
 //import "strconv"
-//import "encoding/json" 
+import "encoding/json" 
 
 
 // Our global map of config variables
@@ -27,7 +27,7 @@ func dbg(str string){
 
 // Print usage and then exit
 func usage(){
-	fmt.Println("tootc [-p] [-f user@instance] [-l post_id] [-m user@instance] [-r post_id] [-cf file]")
+	fmt.Println("tootc [-p] [-f user@instance] [-l post_id] [-m user@instance[,...]] [-r post_id] [-cf file]")
 	fmt.Println("if invoked with no arguments or -cf tootc reads toots from the user's inbox")
 	fmt.Println("-p (Post) read from stdin posting the content to the user's timeline")
 	fmt.Println("-f (Follow) follow user@instance")
@@ -45,6 +45,7 @@ func readConfig(fName string){
 	config = make(map[string]string)
 	config["Inbox"] = ""
 	config["Outbox"] = ""
+	config["ActorPage"] = ""
 
 	fd, err := os.Open(fName)
 	check(err)
@@ -88,12 +89,41 @@ func postToJSON(msg string){
 }
 */
 
+// Validates ActivityPub actor IDs
+// Returns true if valid, false if not
+func validateActorID(actorID string) bool {
+	return true
+}
+
+
+func composeDirectMessage(s string, actorID string){
+
+	//	TODO: Accept multiple actorIDs and truncate messages to 500 characters
+
+	msg := struct {
+    Context string `json:"@context"`
+		Type string `json:"type"`
+		To string `json:"to"`
+    AttributedTo string `json:"attributedTo"`
+		Content string `json:"content"`
+	}{ Context: "https://www.w3.org/ns/activitystreams",
+		Type: "Note",
+		To: actorID,
+		AttributedTo: config["ActorPage"],
+		Content: s }
+
+	j, e := json.MarshalIndent(&msg, "", "\t")
+	check(e)
+	dbg(string(j))
+}
+
 func main(){
 	dbg("Starting \n")
 
 	// Default values
 	cfgFileNameDefault := "~/.tootc"
 
+	// Our CLI flags
 	invokePost := flag.Bool("p", false, "Post stdin to timeline")
 	invokeFollow := flag.String("f", "", "Follow user@instance")
 	invokeLike := flag.String("l", "", "Like post_id")
@@ -118,27 +148,53 @@ func main(){
 
 	// Determine why we are being invoked
 	if *invokePost {
+		dbg("Post")
 		fd, err := os.Stdin.Stat()
 		check(err)
 		if fd.Mode() & os.ModeNamedPipe == 0 {
-			dbg("no pipe")
+			dbg("Failed to read stdin")
+			os.Exit(1)
 		}else{
-			dbg("pipe")
 			bytes, err := ioutil.ReadAll(os.Stdin)
 			check(err)
 			if len(bytes) > 0 {
+				dbg("data found on stdin")
 				dbg(string(bytes))
 				//postToJSON(string(bytes))
 			}
 		}
+
 	}else if len(*invokeFollow) > 0 {
 		dbg("Follow")
+
 	}else if len(*invokeLike) > 0 {
 		dbg("Like")
+
 	}else if len(*invokeMessage) > 0 {
 		dbg("Message")
-	}else if len(*invokeReply) > 0{
+		fd, err := os.Stdin.Stat()
+		check(err)
+		if fd.Mode() & os.ModeNamedPipe == 0 {
+			dbg("Failed to read stdin")
+			os.Exit(1)
+		}else{
+			bytes, err := ioutil.ReadAll(os.Stdin)
+			check(err)
+			if len(bytes) > 0 {
+				dbg("data found on stdin")
+				dbg(string(bytes))
+				if validateActorID(*invokeMessage){
+					composeDirectMessage(strings.TrimRight(string(bytes), "\n"), *invokeMessage)
+				}else{
+					dbg("Invalid Actor ID")
+					os.Exit(1)
+				}
+			}
+		}
+
+	}else if len(*invokeReply) > 0 {
 		dbg("Reply")
+
 	}else{ // Read toots from user's inbox
 		dbg("Read")
 	}
