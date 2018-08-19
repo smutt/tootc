@@ -5,10 +5,11 @@ import "bufio"
 import "os"
 import "flag"
 import "strings"
+import "bytes"
 import "io/ioutil"
 //import "strconv"
-import "encoding/json" 
-
+import "encoding/json"
+import "unicode/utf8"
 
 // Our global map of config variables
 var config map[string] string
@@ -20,6 +21,12 @@ func check(e error){
 	}
 }
 
+// Print string then exit(1)
+func die(str string){
+	fmt.Println(str)
+	os.Exit(1)
+}
+
 // Simple debug func
 func dbg(str string){
 	fmt.Println(str)
@@ -27,15 +34,16 @@ func dbg(str string){
 
 // Print usage and then exit
 func usage(){
-	fmt.Println("tootc [-p] [-f user@instance] [-l post_id] [-m user@instance[,...]] [-r post_id] [-cf file]")
+	fmt.Println("tootc [-pu] [-f user@instance] [-l post_id] [-m user@instance[,...]] [-r post_id] [-cf file]")
 	fmt.Println("if invoked with no arguments or -cf tootc reads toots from the user's inbox")
+	fmt.Println("-u (Usage) print this message then exit")
 	fmt.Println("-p (Post) read from stdin posting the content to the user's timeline")
 	fmt.Println("-f (Follow) follow user@instance")
 	fmt.Println("-l (Like) like post_id")
-	fmt.Println("-m (Message) read from stdin messaging user@instance directly")
+	fmt.Println("-m (Message) read from stdin messaging comma separated list of [user@instance[,...]] directly")
 	fmt.Println("-r (Reply) post reply to post_id")
 	fmt.Println("-cf use a different configuration file than ~/.tootc")
-	fmt.Println("pflmr are all mutually exclusive")
+	fmt.Println("flmpru are all mutually exclusive")
 	os.Exit(0)
 }
 
@@ -80,54 +88,71 @@ func readConfig(fName string){
 	for k, v := range config {
 		dbg("Key:" + k + " Value:" + v)
 	}
+	dbg("")
 }
 
-/*
-func postToJSON(msg string){
-	return 42
-
+// Takes []bytes of runes and length runeLimit
+// Returns [] []bytes each limited to runeLimit, ordering not-intuitive
+// Still broken, need to look at it with fresh mind
+func splitRunes(input []byte, limit int) [][]byte {
+	if utf8.RuneCount(input) <= limit {
+		rv := make([][]byte, 0)
+		rv = append(rv, input)
+		return rv
+	}else{
+		tmp := make([]byte, 0)
+		for ii := 0; ii < limit; ii++ {
+			_, size := utf8.DecodeRune(input)
+			for jj := 0; jj < size; jj++ {
+				tmp = append(tmp, input[0])
+				input = input[1:]
+			}
+		}
+		rv := append(splitRunes(input, limit), tmp)
+		for ii, jj := 0, len(rv)-1; ii < jj; ii, jj = ii+1, jj-1 {
+			rv[ii], rv[jj] = rv[jj], rv[ii]
+		}
+		return rv
+	}
 }
-*/
 
 // Validates ActivityPub actor IDs
 // Returns true if valid, false if not
-func validateActorID(actorID string) bool {
+func validateActorIDs(actorIDs []string) bool {
 	return true
 }
 
-
-func composeDirectMessage(s string, actorID string){
-
-	//	TODO: Accept multiple actorIDs and truncate messages to 500 characters
-
+func composeDirectMessage(s string, actorIDs []string) string {
 	msg := struct {
     Context string `json:"@context"`
 		Type string `json:"type"`
-		To string `json:"to"`
+		To []string `json:"to"`
     AttributedTo string `json:"attributedTo"`
 		Content string `json:"content"`
 	}{ Context: "https://www.w3.org/ns/activitystreams",
 		Type: "Note",
-		To: actorID,
+		To: actorIDs,
 		AttributedTo: config["ActorPage"],
 		Content: s }
 
 	j, e := json.MarshalIndent(&msg, "", "\t")
 	check(e)
-	dbg(string(j))
+	return string(j)
 }
 
 func main(){
-	dbg("Starting \n")
+	dbg("Starting")
 
 	// Default values
 	cfgFileNameDefault := "~/.tootc"
+	maxTootRunes := 500 // The 500 text-characters(runes) limit is a Mastodon limit. We are intentionally conservative.
 
 	// Our CLI flags
+	invokeUsage := flag.Bool("u", false, "Print usage then exit")
 	invokePost := flag.Bool("p", false, "Post stdin to timeline")
 	invokeFollow := flag.String("f", "", "Follow user@instance")
 	invokeLike := flag.String("l", "", "Like post_id")
-	invokeMessage := flag.String("m", "", "Message user@instance directly")
+	invokeMessage := flag.String("m", "", "Message user@instance directly from stdin")
 	invokeReply := flag.String("r", "", "Reply to post_id with stdin")
 	cfgFileName := flag.String("cf", cfgFileNameDefault, "Configuration file")
 	flag.Parse()
@@ -135,32 +160,30 @@ func main(){
 	if *cfgFileName == cfgFileNameDefault {
 		readConfig(os.Getenv("HOME") + strings.TrimLeft(cfgFileNameDefault, "~"))
 		if flag.NFlag() > 1 {
-			dbg("Too many CLI arguments")
-			usage()
+			die("Too many CLI arguments")
 		}
 	}else{
 		readConfig(*cfgFileName)
 		if flag.NFlag() > 2 {
-			dbg("Too many CLI arguments")
-			usage()
+			die("Too many CLI arguments")
 		}
 	}
 
 	// Determine why we are being invoked
-	if *invokePost {
+	if *invokeUsage {
+		usage()
+
+	}else if *invokePost {
 		dbg("Post")
 		fd, err := os.Stdin.Stat()
 		check(err)
 		if fd.Mode() & os.ModeNamedPipe == 0 {
-			dbg("Failed to read stdin")
-			os.Exit(1)
+			die("Failed to read stdin")
 		}else{
 			bytes, err := ioutil.ReadAll(os.Stdin)
 			check(err)
 			if len(bytes) > 0 {
-				dbg("data found on stdin")
-				dbg(string(bytes))
-				//postToJSON(string(bytes))
+				dbg("data found on stdin" + string(bytes))
 			}
 		}
 
@@ -175,20 +198,31 @@ func main(){
 		fd, err := os.Stdin.Stat()
 		check(err)
 		if fd.Mode() & os.ModeNamedPipe == 0 {
-			dbg("Failed to read stdin")
-			os.Exit(1)
+			die("Failed to read stdin")
 		}else{
-			bytes, err := ioutil.ReadAll(os.Stdin)
+			stdInput, err := ioutil.ReadAll(os.Stdin)
 			check(err)
-			if len(bytes) > 0 {
-				dbg("data found on stdin")
-				dbg(string(bytes))
-				if validateActorID(*invokeMessage){
-					composeDirectMessage(strings.TrimRight(string(bytes), "\n"), *invokeMessage)
-				}else{
-					dbg("Invalid Actor ID")
-					os.Exit(1)
+			if len(stdInput) > 0 {
+				dbg("data found on stdin" + string(stdInput))
+
+				var actorIDs []string
+				for _, v := range strings.Split(*invokeMessage, ","){
+					actorIDs = append(actorIDs, strings.TrimSpace(v))
 				}
+				if validateActorIDs(actorIDs){
+					if utf8.Valid(stdInput){
+						for _, v := range splitRunes(bytes.TrimRight(stdInput, "\n"), maxTootRunes){
+							msg := composeDirectMessage(string(v), actorIDs)
+							dbg(msg)
+						}
+					}else{
+						die("Invalid utf8 from stdin")
+					}
+				}else{
+					die("Invalid Actor ID(s)")
+				}
+			}else{
+				die("Zero bytes read on stdin")
 			}
 		}
 
