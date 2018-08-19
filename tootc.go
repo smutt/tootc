@@ -91,15 +91,14 @@ func readConfig(fName string){
 	dbg("")
 }
 
-// Takes []bytes of runes and length runeLimit
-// Returns [] []bytes each limited to runeLimit, ordering not-intuitive
-// Still broken, need to look at it with fresh mind
+// Takes []bytes of input(utf8) and length limit
+// Returns [][]bytes each limited to limit number of runes
 func splitRunes(input []byte, limit int) [][]byte {
-	if utf8.RuneCount(input) <= limit {
-		rv := make([][]byte, 0)
-		rv = append(rv, input)
-		return rv
-	}else{
+	rv := make([][]byte, 0)
+	for {
+		if utf8.RuneCount(input) <= limit {
+			return append(rv, input)
+		}
 		tmp := make([]byte, 0)
 		for ii := 0; ii < limit; ii++ {
 			_, size := utf8.DecodeRune(input)
@@ -108,11 +107,7 @@ func splitRunes(input []byte, limit int) [][]byte {
 				input = input[1:]
 			}
 		}
-		rv := append(splitRunes(input, limit), tmp)
-		for ii, jj := 0, len(rv)-1; ii < jj; ii, jj = ii+1, jj-1 {
-			rv[ii], rv[jj] = rv[jj], rv[ii]
-		}
-		return rv
+		rv = append(rv, tmp)
 	}
 }
 
