@@ -3,6 +3,7 @@ package main
 import "fmt"
 import "bufio"
 import "os"
+import "errors"
 import "flag"
 import "strings"
 import "bytes"
@@ -173,6 +174,47 @@ func composeDirectMessage(s string, actorIDs []string) string {
 	return string(j)
 }
 
+// Reads stdin, returns utf8 []byte or error
+func getStdIn() ([]byte, error) {
+	fd, err := os.Stdin.Stat()
+	if err != nil{
+		return nil, err
+	}
+	if fd.Mode() & os.ModeNamedPipe == 0 {
+		return nil, errors.New("stdin not a pipe")
+	}else{
+		stdInput, err := ioutil.ReadAll(os.Stdin)
+		if err != nil{
+			return nil, err
+		}
+		if len(stdInput) == 0 {
+			return nil, errors.New("stdin is zero-length")
+		}else{
+			if ! utf8.Valid(stdInput){
+				return nil, errors.New("stdin is not utf8")
+			}else{
+				return stdInput, nil
+			}
+		}
+	}
+}
+
+// Writes file to disk or returns error 
+func writeFile(s string, fn string) error {
+	if _, err := os.Stat(fn); err != nil {
+		if fd, err := os.Create(fn); err == nil {
+			defer fd.Close()
+			fd.WriteString(s)
+		}else{
+			fd.Close()
+			return errors.New("Error creating file")
+		}
+	}else{
+		return errors.New("Message already in queue")
+	}
+	return nil
+}
+
 func main(){
 	dbg("Starting")
 
@@ -209,17 +251,9 @@ func main(){
 
 	}else if *invokePost {
 		dbg("Post")
-		fd, err := os.Stdin.Stat()
+		stdin, err := getStdIn()
 		check(err)
-		if fd.Mode() & os.ModeNamedPipe == 0 {
-			die("Failed to read stdin")
-		}else{
-			bytes, err := ioutil.ReadAll(os.Stdin)
-			check(err)
-			if len(bytes) > 0 {
-				dbg("data found on stdin" + string(bytes))
-			}
-		}
+		dbg(string(stdin))
 
 	}else if len(*invokeFollow) > 0 {
 		dbg("Follow")
@@ -229,49 +263,23 @@ func main(){
 
 	}else if len(*invokeMessage) > 0 {
 		dbg("Message")
-		fd, err := os.Stdin.Stat()
-		check(err)
-		if fd.Mode() & os.ModeNamedPipe == 0 {
-			die("Failed to read stdin")
-		}else{
-			stdInput, err := ioutil.ReadAll(os.Stdin)
-			check(err)
-			if len(stdInput) > 0 {
-				dbg("data found on stdin" + string(stdInput))
 
-				var actorIDs []string
-				for _, v := range strings.Split(*invokeMessage, ","){
-					actorIDs = append(actorIDs, strings.TrimSpace(v))
-				}
-				if validateActorIDs(actorIDs){
-					if utf8.Valid(stdInput){
-						for _, v := range splitRunes(bytes.TrimRight(stdInput, "\n"), maxTootRunes){
-							msg := composeDirectMessage(string(v), actorIDs)
-							dbg(msg)
-							hash := sha256.Sum256([]byte(msg))
-							outFile := strings.TrimRight(config["Outbox"], "/") + "/" + base64.RawURLEncoding.EncodeToString(hash[:]) + ".json"
-							if _, err := os.Stat(outFile); err != nil {
-								if fd, err := os.Create(outFile); err == nil {
-									defer fd.Close()
-									fd.WriteString(msg)
-								}else{
-									fmt.Println(" failed:", err)
-									fd.Close()
-									die("Error creating file")
-								}
-							}else{
-								die("Message already queued")
-							}
-						}
-					}else{
-						die("Invalid utf8 from stdin")
-					}
-				}else{
-					die("Invalid Actor ID(s)")
-				}
-			}else{
-				die("Zero bytes read on stdin")
+		stdIn, err := getStdIn()
+		check(err)
+		var actorIDs []string
+		for _, v := range strings.Split(*invokeMessage, ","){
+			actorIDs = append(actorIDs, strings.TrimSpace(v))
+		}
+
+		if validateActorIDs(actorIDs){
+			for _, v := range splitRunes(bytes.TrimRight(stdIn, "\n"), maxTootRunes){
+				msg := composeDirectMessage(string(v), actorIDs)
+				hash := sha256.Sum256([]byte(msg))
+				err := writeFile(msg, strings.TrimRight(config["Outbox"], "/") + "/" + base64.RawURLEncoding.EncodeToString(hash[:]) + ".json")
+				check(err)
 			}
+		}else{
+			die("Invalid Actor ID(s)")
 		}
 
 	}else if len(*invokeReply) > 0 {
