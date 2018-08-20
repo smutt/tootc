@@ -157,10 +157,10 @@ func validateActorID(actorID string) bool {
 
 func composeDirectMessage(s string, actorIDs []string) string {
 	msg := struct {
-    Context string `json:"@context"`
+		Context string `json:"@context"`
 		Type string `json:"type"`
 		To []string `json:"to"`
-    AttributedTo string `json:"attributedTo"`
+		AttributedTo string `json:"attributedTo"`
 		Content string `json:"content"`
 	}{ Context: "https://www.w3.org/ns/activitystreams",
 		Type: "Note",
