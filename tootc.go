@@ -11,8 +11,10 @@ import "io/ioutil"
 import "encoding/json"
 import "unicode/utf8"
 
-// Our global map of config variables
-var config map[string] string
+// Globals
+var config map[string] string // Map of config variables
+var naughtyRunes string // Unallowed runes in user input
+var maxTootRunes int // Maximum runes allowed in any toot
 
 // Simple check func 
 func check(e error){
@@ -112,8 +114,42 @@ func splitRunes(input []byte, limit int) [][]byte {
 }
 
 // Validates ActivityPub actor IDs
-// Returns true if valid, false if not
+// Returns true if all valid, false if not
 func validateActorIDs(actorIDs []string) bool {
+	for _, v := range actorIDs {
+		if ! validateActorID(v) {
+			return false
+		}
+	}
+	return true
+}
+
+// Validates a single ActivityPub actor ID
+// Returns true if valid, false if not
+// This is incredibly simplistic and likely wrong, will update over time
+func validateActorID(actorID string) bool {
+	actorID = strings.TrimSpace(actorID)
+	if len(actorID) > 255 {
+		return false
+	}
+	if strings.ContainsAny(actorID, naughtyRunes) {
+		return false
+	}
+	if strings.Count(actorID, "@") != 1 {
+		return false
+	}
+	s := strings.Split(actorID, "@")
+	if len(s[0]) + len(s[1]) < 2 {
+		return false
+	}
+	if strings.Count(s[1], ".") < 1 {
+		return false
+	}
+	for _, label := range strings.Split(s[1], ".") {
+		if len(label) < 1 {
+			return false
+		}
+	}
 	return true
 }
 
@@ -140,7 +176,8 @@ func main(){
 
 	// Default values
 	cfgFileNameDefault := "~/.tootc"
-	maxTootRunes := 500 // The 500 text-characters(runes) limit is a Mastodon limit. We are intentionally conservative.
+	maxTootRunes = 500 // The 500 text-characters(runes) limit is a Mastodon limit. We are intentionally conservative.
+	naughtyRunes = "`!#$%&*<>,?\\|[]{}'\";"
 
 	// Our CLI flags
 	invokeUsage := flag.Bool("u", false, "Print usage then exit")
