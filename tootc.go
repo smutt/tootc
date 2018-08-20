@@ -10,13 +10,15 @@ import "io/ioutil"
 //import "strconv"
 import "encoding/json"
 import "unicode/utf8"
+import "crypto/sha256"
+import "encoding/base64"
 
 // Globals
 var config map[string] string // Map of config variables
 var naughtyRunes string // Unallowed runes in user input
 var maxTootRunes int // Maximum runes allowed in any toot
 
-// Simple check func 
+// Simple check func
 func check(e error){
 	if e != nil {
 		panic(e)
@@ -246,6 +248,20 @@ func main(){
 						for _, v := range splitRunes(bytes.TrimRight(stdInput, "\n"), maxTootRunes){
 							msg := composeDirectMessage(string(v), actorIDs)
 							dbg(msg)
+							hash := sha256.Sum256([]byte(msg))
+							outFile := strings.TrimRight(config["Outbox"], "/") + "/" + base64.RawURLEncoding.EncodeToString(hash[:]) + ".json"
+							if _, err := os.Stat(outFile); err != nil {
+								if fd, err := os.Create(outFile); err == nil {
+									defer fd.Close()
+									fd.WriteString(msg)
+								}else{
+									fmt.Println(" failed:", err)
+									fd.Close()
+									die("Error creating file")
+								}
+							}else{
+								die("Message already queued")
+							}
 						}
 					}else{
 						die("Invalid utf8 from stdin")
