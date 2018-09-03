@@ -45,7 +45,7 @@ func usage(){
 	fmt.Println("-u (Usage) print this message then exit")
 	fmt.Println("-p (Post) read from stdin posting the content to the user's timeline")
 	fmt.Println("-f (Follow) follow user@instance")
-	fmt.Println("-l (Like) like post_id")
+	fmt.Println("-l (Like) like post_id from user@instance")
 	fmt.Println("-m (Message) read from stdin messaging comma separated list of [user@instance[,...]] directly")
 	fmt.Println("-r (Reply) read from stdin replying to post_id from user@instance")
 	fmt.Println("-c use a different configuration file than ~/.tootc")
@@ -263,7 +263,6 @@ func composeReply(s string, actorID string, postID string) string {
 	return string(j)
 }
 
-
 func composePost(s string) string {
 	msg := struct {
 		Context string `json:"@context"`
@@ -280,6 +279,23 @@ func composePost(s string) string {
 	return string(j)
 }
 
+func composeLike(s string, to string, postID string) string {
+	msg := struct {
+		Context string `json:"@context"`
+		Type string `json:"type"`
+		To string `json:"to"`
+		Actor string `json:"actor"`
+		Object string `json:"object"`
+	}{ Context: "https://www.w3.org/ns/activitystreams",
+		Type: "Like",
+		To: to,
+		Actor: activeAccount["UserPrefixURI"] + activeAccount["User"],
+		Object: postID	}
+
+	j, e := json.MarshalIndent(&msg, "", "\t")
+	check(e)
+	return string(j)
+}
 
 // Reads stdin, returns utf8 []byte or error
 func getStdIn() ([]byte, error) {
@@ -334,9 +350,9 @@ func main(){
 	invokeUsage := flag.Bool("u", false, "Print usage then exit")
 	invokePost := flag.Bool("p", false, "Post stdin to timeline")
 	invokeFollow := flag.String("f", "", "Follow user@instance")
-	invokeLike := flag.String("l", "", "Like post_id")
+	invokeLike := flag.String("l", "", "Like post_id from user@instance")
 	invokeMessage := flag.String("m", "", "Message user@instance directly from stdin")
-	invokeReply := flag.String("r", "", "Reply to post_id with stdin")
+	invokeReply := flag.String("r", "", "Reply to post_id from user@instance from stdin")
 	cfgFileName := flag.String("c", cfgFileNameDefault, "Configuration file")
 	flag.Parse()
 
