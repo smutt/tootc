@@ -12,6 +12,7 @@ import "encoding/json"
 import "unicode/utf8"
 import "crypto/sha256"
 import "encoding/base64"
+import "net/url"
 
 // Globals
 var config map[string] map[string] string // Map of maps of config variables
@@ -127,22 +128,10 @@ func splitRunes(input []byte, limit int) [][]byte {
 	}
 }
 
-// Validates ActivityPub actor IDs
-// Returns true if all valid, false if not
-func validateActorIDs(actorIDs []string) bool {
-	for _, v := range actorIDs {
-		if ! validateActorID(v) {
-			return false
-		}
-	}
-	return true
-}
-
-// Validates a single ActivityPub actor ID
+// Validates an RFC822 style actor ID
 // Returns true if valid, false if not
 // This is incredibly simplistic and likely wrong, will update over time
-func validateActorID(actorID string) bool {
-	actorID = strings.TrimSpace(actorID)
+func validate822(actorID string) bool {
 	if len(actorID) > 255 {
 		return false
 	}
@@ -167,6 +156,75 @@ func validateActorID(actorID string) bool {
 	return true
 }
 
+// Validates a URI
+// Returns true if valid, false if not
+// This is incredibly simplistic and likely wrong, will update over time
+func validateURI(actorID string) bool {
+	u, err := url.Parse(actorID)
+	if err != nil{
+		return false
+	}
+	// Path can be nil and APub requires HTTPS
+	if u.Scheme != "https" || u.Host == "" {
+		return false
+	}
+	return true
+}
+
+// Takes user input of actor IDs
+// Returns list of actorIDs as URIs for the ones it can figure out
+// Returned list may be zero-length
+func expandActorIDs(actorIDs []string) []string {
+	var rv []string
+	var err error
+	actorID := ""
+	for _, v := range actorIDs {
+		actorID, err = expandActorID(v)
+		if err == nil {
+			rv = append(rv, actorID)
+		}
+	}
+	return rv
+}
+
+// actorIDs can take these forms {user, user@domain, URI}
+func expandActorID(actorID string) (string, error) {
+	actorID = strings.TrimSpace(actorID)
+	if strings.Contains(actorID, "@") {
+		if ! validate822(actorID) {
+			return "", errors.New("Invalid 822ActorID")
+		}else{
+			tmp := strings.Split(actorID, "@")
+			user, domain := tmp[0], tmp[1]
+			for _, v := range config {
+				if domain == v["Domain"] {
+					dbg(domain)
+					if len(v["UserPrefixURI"]) > 0 {
+						return v["UserPrefixURI"] + user, nil
+					}else{
+						return "", errors.New("UserPrefixURI not set for " + domain)
+					}
+				}else{
+					return "", errors.New("Unknown domain " + domain)
+				}
+			}
+		}
+	}else if strings.Contains(actorID, "://") {
+		if ! validateURI(actorID) {
+			return "", errors.New("Invalid URI")
+		}else{
+			return actorID, nil
+		}
+	}else{
+		if strings.ContainsAny(actorID, naughtyRunes) {
+			return "", errors.New("Invalid UserActorID")
+		}else{
+			return activeAccount["UserPrefixURI"] + actorID, nil
+		}
+	}
+	panic("Assert in expandActorID") // Won't compile without this statement :)
+}
+
 func composeNote(s string, actorIDs []string) string {
 	msg := struct {
 		Context string `json:"@context"`
@@ -177,7 +235,7 @@ func composeNote(s string, actorIDs []string) string {
 	}{ Context: "https://www.w3.org/ns/activitystreams",
 		Type: "Note",
 		To: actorIDs,
-		AttributedTo: activeAccount["ActorPage"],
+		AttributedTo: activeAccount["UserPrefixURI"] + activeAccount["User"],
 		Content: s }
 
 	j, e := json.MarshalIndent(&msg, "", "\t")
@@ -196,7 +254,7 @@ func composeReply(s string, actorID string, postID string) string {
 	}{ Context: "https://www.w3.org/ns/activitystreams",
 		Type: "Note",
 		To: actorID,
-		AttributedTo: activeAccount["ActorPage"],
+		AttributedTo: activeAccount["UserPrefixURI"] + activeAccount["User"],
 		InReplyTo: postID,
 		Content: s }
 
@@ -214,7 +272,7 @@ func composePost(s string) string {
 		Content string `json:"content"`
 	}{ Context: "https://www.w3.org/ns/activitystreams",
 		Type: "Note",
-		AttributedTo: activeAccount["ActorPage"],
+		AttributedTo: activeAccount["UserPrefixURI"] + activeAccount["User"],
 		Content: s }
 
 	j, e := json.MarshalIndent(&msg, "", "\t")
@@ -328,8 +386,9 @@ func main(){
 		for _, v := range strings.Split(*invokeMessage, ","){
 			actorIDs = append(actorIDs, strings.TrimSpace(v))
 		}
+		actorIDs = expandActorIDs(actorIDs)
 
-		if validateActorIDs(actorIDs){
+		if len(actorIDs) > 0 {
 			for _, v := range splitRunes(bytes.TrimRight(stdIn, "\n"), maxTootRunes){
 				msg := composeNote(string(v), actorIDs)
 				hash := sha256.Sum256([]byte(msg))

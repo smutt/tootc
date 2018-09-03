@@ -6,15 +6,17 @@ GlobalFoo = test
 
 Account default {
   Type = local
+  User = smutt
   Inbox = /var/spool/tootd/users/smutt/inbox
   Outbox = /var/spool/tootd/users/smutt/outbox
-  ActorURI = https://hawk.depht.com/smutt/
+  UserPrefixURI = https://hawk.depht.com/
   Domain = hawk.depht.com
 } 
 
 Account emu {
   Type = remote
+  User = smutt
   BaseURI = https://emu.depht.com/
-  ActorURI = https://emu.depht.com/smutt
+  UserPrefixURI = https://emu.depht.com/
   Domain = emu.depht.com
 }
