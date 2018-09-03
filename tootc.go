@@ -1,7 +1,6 @@
 package main
 
 import "fmt"
-import "bufio"
 import "os"
 import "errors"
 import "flag"
@@ -15,7 +14,8 @@ import "crypto/sha256"
 import "encoding/base64"
 
 // Globals
-var config map[string] string // Map of config variables
+var config map[string] map[string] string // Map of maps of config variables
+var activeAccount map[string] string // Our active account config
 var naughtyRunes string // Unallowed runes in user input
 var maxTootRunes int // Maximum runes allowed in any toot
 
@@ -39,62 +39,73 @@ func dbg(str string){
 
 // Print usage and then exit
 func usage(){
-	fmt.Println("tootc [-pu] [-f user@instance] [-l post_id] [-m user@instance[,...]] [-r post_id] [-cf file]")
-	fmt.Println("if invoked with no arguments or -cf tootc reads toots from the user's inbox")
+	fmt.Println("tootc [-pu] [-f user@instance] [-l post_id] [-m user@instance[,...]] [-r user@instance post_id] [-cf file]")
+	fmt.Println("if invoked with no arguments or -c tootc reads toots from the user's inbox")
 	fmt.Println("-u (Usage) print this message then exit")
 	fmt.Println("-p (Post) read from stdin posting the content to the user's timeline")
 	fmt.Println("-f (Follow) follow user@instance")
 	fmt.Println("-l (Like) like post_id")
 	fmt.Println("-m (Message) read from stdin messaging comma separated list of [user@instance[,...]] directly")
-	fmt.Println("-r (Reply) post reply to post_id")
-	fmt.Println("-cf use a different configuration file than ~/.tootc")
+	fmt.Println("-r (Reply) read from stdin replying to post_id from user@instance")
+	fmt.Println("-c use a different configuration file than ~/.tootc")
 	fmt.Println("flmpru are all mutually exclusive")
 	os.Exit(0)
 }
 
 // Read in config from passed filename
 func readConfig(fName string){
-	// Init global defaults
-	config = make(map[string]string)
-	config["Inbox"] = ""
-	config["Outbox"] = ""
-	config["ActorPage"] = ""
+	parseLine := func(line string) (string, string) {
+		line = strings.TrimSpace(line)
 
-	fd, err := os.Open(fName)
-	check(err)
-	defer fd.Close()
-
-	confScanner := bufio.NewScanner(fd)
-	for confScanner.Scan(){
-		l := strings.TrimSpace(confScanner.Text())
-
-		if len(l) == 0 {
-			continue
+		if len(line) == 0 {
+			return "", ""
 		}
-		if strings.Index(l, "#") == 0 {
-			continue
+		if strings.Index(line, "#") == 0 {
+			return "", ""
 		}
-
-		kv := strings.Split(l, "=")
-		if len(kv) == 1 {
-			continue
+		kv := strings.SplitN(line, "=", 2)
+		if len(kv) != 2 {
+			return "", ""
 		}else{
-			k := strings.TrimSpace(kv[0])
-			v := strings.TrimSpace(kv[1])
+			return strings.TrimSpace(kv[0]), strings.TrimSpace(kv[1])
+		}
+	}
 
-			if _, exists := config[k]; exists {
-				switch {
-				default: // Handle all single value strings here
-					config[k] = v
-				}
+	config = make(map[string] map[string]string)
+	c, err := ioutil.ReadFile(fName)
+	check(err)
+
+	sections := strings.Split(string(c), "Account ")
+	config["global"] = make(map[string]string)
+	k, v := "", ""
+	for _, line := range strings.Split(sections[0], "\n") {
+		k, v = parseLine(line)
+		if len(k) > 0 {
+			config["global"][k] = v
+		}
+	}
+
+	name := ""
+	for _, account := range sections[1:] {
+		name = strings.TrimSpace(strings.SplitN(account, "{", 2)[0]) 
+		config[name] = make(map[string]string)
+		for _, line := range strings.Split(account, "\n") {
+			k, v = parseLine(line)
+			if len(k) > 0 {
+				config[name][k] = v
 			}
 		}
 	}
+	/*
 	for k, v := range config {
-		dbg("Key:" + k + " Value:" + v)
+		dbg("Key:" + k)
+		for j, i := range v {
+			dbg("KeyKey:" + j + " Val:" + i)
+		}
 	}
-	dbg("")
+  */
 }
+
 
 // Takes []bytes of input(utf8) and length limit
 // Returns [][]bytes each limited to limit number of runes
@@ -156,7 +167,7 @@ func validateActorID(actorID string) bool {
 	return true
 }
 
-func composeDirectMessage(s string, actorIDs []string) string {
+func composeNote(s string, actorIDs []string) string {
 	msg := struct {
 		Context string `json:"@context"`
 		Type string `json:"type"`
@@ -166,13 +177,51 @@ func composeDirectMessage(s string, actorIDs []string) string {
 	}{ Context: "https://www.w3.org/ns/activitystreams",
 		Type: "Note",
 		To: actorIDs,
-		AttributedTo: config["ActorPage"],
+		AttributedTo: activeAccount["ActorPage"],
 		Content: s }
 
 	j, e := json.MarshalIndent(&msg, "", "\t")
 	check(e)
 	return string(j)
 }
+
+func composeReply(s string, actorID string, postID string) string {
+	msg := struct {
+		Context string `json:"@context"`
+		Type string `json:"type"`
+		To string `json:"to"`
+		AttributedTo string `json:"attributedTo"`
+		InReplyTo string  `json:"inReplyTo"`
+		Content string `json:"content"`
+	}{ Context: "https://www.w3.org/ns/activitystreams",
+		Type: "Note",
+		To: actorID,
+		AttributedTo: activeAccount["ActorPage"],
+		InReplyTo: postID,
+		Content: s }
+
+	j, e := json.MarshalIndent(&msg, "", "\t")
+	check(e)
+	return string(j)
+}
+
+
+func composePost(s string) string {
+	msg := struct {
+		Context string `json:"@context"`
+		Type string `json:"type"`
+		AttributedTo string `json:"attributedTo"`
+		Content string `json:"content"`
+	}{ Context: "https://www.w3.org/ns/activitystreams",
+		Type: "Note",
+		AttributedTo: activeAccount["ActorPage"],
+		Content: s }
+
+	j, e := json.MarshalIndent(&msg, "", "\t")
+	check(e)
+	return string(j)
+}
+
 
 // Reads stdin, returns utf8 []byte or error
 func getStdIn() ([]byte, error) {
@@ -230,7 +279,7 @@ func main(){
 	invokeLike := flag.String("l", "", "Like post_id")
 	invokeMessage := flag.String("m", "", "Message user@instance directly from stdin")
 	invokeReply := flag.String("r", "", "Reply to post_id with stdin")
-	cfgFileName := flag.String("cf", cfgFileNameDefault, "Configuration file")
+	cfgFileName := flag.String("c", cfgFileNameDefault, "Configuration file")
 	flag.Parse()
 
 	if *cfgFileName == cfgFileNameDefault {
@@ -245,6 +294,9 @@ func main(){
 		}
 	}
 
+	// For now our active account is always just default
+	activeAccount = config["default"]
+
 	// Determine why we are being invoked
 	if *invokeUsage {
 		usage()
@@ -253,7 +305,13 @@ func main(){
 		dbg("Post")
 		stdin, err := getStdIn()
 		check(err)
-		dbg(string(stdin))
+
+		for _, v := range splitRunes(bytes.TrimRight(stdin, "\n"), maxTootRunes){
+			msg := composePost(string(v))
+			hash := sha256.Sum256([]byte(msg))
+			err := writeFile(msg, strings.TrimRight(activeAccount["Outbox"], "/") + "/" + base64.RawURLEncoding.EncodeToString(hash[:]) + ".json")
+			check(err)
+		}
 
 	}else if len(*invokeFollow) > 0 {
 		dbg("Follow")
@@ -273,9 +331,9 @@ func main(){
 
 		if validateActorIDs(actorIDs){
 			for _, v := range splitRunes(bytes.TrimRight(stdIn, "\n"), maxTootRunes){
-				msg := composeDirectMessage(string(v), actorIDs)
+				msg := composeNote(string(v), actorIDs)
 				hash := sha256.Sum256([]byte(msg))
-				err := writeFile(msg, strings.TrimRight(config["Outbox"], "/") + "/" + base64.RawURLEncoding.EncodeToString(hash[:]) + ".json")
+				err := writeFile(msg, strings.TrimRight(activeAccount["Outbox"], "/") + "/" + base64.RawURLEncoding.EncodeToString(hash[:]) + ".json")
 				check(err)
 			}
 		}else{
