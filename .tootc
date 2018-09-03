@@ -1,0 +1,18 @@
+# Basic config file
+# First come globals
+# Then come Account sections   
+
+GlobalFoo = test
+
+Account default {
+  Type = local
+  Inbox = /var/spool/tootd/users/smutt/inbox
+  Outbox = /var/spool/tootd/users/smutt/outbox
+  ActorURI = https://hawk.depht.com/smutt/
+} 
+
+Account emu {
+  Type = remote
+  BaseURI = https://emu.depht.com/
+  ActorURI = https://emu.depht.com/smutt
+}
