@@ -9,10 +9,12 @@ Account default {
   Inbox = /var/spool/tootd/users/smutt/inbox
   Outbox = /var/spool/tootd/users/smutt/outbox
   ActorURI = https://hawk.depht.com/smutt/
+  Domain = hawk.depht.com
 } 
 
 Account emu {
   Type = remote
   BaseURI = https://emu.depht.com/
   ActorURI = https://emu.depht.com/smutt
+  Domain = emu.depht.com
 }
